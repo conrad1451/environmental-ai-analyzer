@@ -256,7 +256,11 @@ def _process_single_coordinate(coords, api_key):
                 "gbifID_original_index": coords.get('gbifID_original_index') # IMPORTANT: Pass this back!
             }
     except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
-        # ... (existing error handling) ...
+        # Catch network errors, timeouts, HTTP errors, and JSON decoding errors from requests.post
+        error_detail = str(e)
+        if hasattr(e, 'response') and e.response is not None:
+            error_detail = f"HTTP Status {e.response.status_code}: {e.response.text}"
+        logging.error(f"Error processing coordinate ({decimal_latitude}, {decimal_longitude}): {error_detail}")
         return {
             "latitude": decimal_latitude,
             "longitude": decimal_longitude,

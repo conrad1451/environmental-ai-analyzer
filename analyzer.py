@@ -1,4 +1,6 @@
-from flask import Flask, jsonify
+# analyzer
+
+from flask import Flask, jsonify, request # Import request
 import requests
 import json
 import os
@@ -6,10 +8,10 @@ import os
 app = Flask(__name__)
 
 # It's better to store your API key as an environment variable
-api_key = os.environ.get("GEMINI_PERSONAL_API_KEY")
+api_key = os.environ.get("GEMINI_PERSONAL_API_KEY") # Using GEMINI_PERSONAL_API_KEY as per your code
 
 if not api_key:
-    print("Error: GEMINI_API_KEY environment variable not set.")
+    print("Error: GEMINI_PERSONAL_API_KEY environment variable not set.") # Updated error message
 
 @app.route('/')
 def hello_world():
@@ -18,7 +20,7 @@ def hello_world():
 @app.route('/explain_ai')
 def explain_ai():
     if not api_key:
-        return jsonify({"error": "GEMINI_API_KEY environment variable not set."})
+        return jsonify({"error": "GEMINI_PERSONAL_API_KEY environment variable not set."})
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
@@ -43,7 +45,7 @@ def explain_ai():
 @app.route('/countycityfromcoordinates')
 def get_county_city_from_coordinates():
     if not api_key:
-        return jsonify({"error": "GEMINI_API_KEY environment variable not set."})
+        return jsonify({"error": "GEMINI_PERSONAL_API_KEY environment variable not set."})
 
     decimal_latitude = request.args.get('latitude')
     decimal_longitude = request.args.get('longitude')
@@ -87,9 +89,9 @@ def get_county_city_from_coordinates():
     
 
 @app.route('/aichat')
-def gemini_chat():
+def aichat_endpoint(): # Renamed the function to resolve the conflict
     if not api_key:
-        return jsonify({"error": "GEMINI_API_KEY environment variable not set."})
+        return jsonify({"error": "GEMINI_PERSONAL_API_KEY environment variable not set."})
 
     user_input = request.args.get('text')
 
@@ -116,7 +118,6 @@ def gemini_chat():
     except json.JSONDecodeError:
         return jsonify({"error": "Error decoding JSON response."})
     
-
 
 if __name__ == '__main__':
     app.run(debug=True)

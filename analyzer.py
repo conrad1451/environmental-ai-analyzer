@@ -41,7 +41,7 @@ def explain_ai():
         return jsonify({"error": "Error decoding JSON response."})
 
 @app.route('/countycityfromcoordinates')
-def gemini_chat():
+def get_county_city_from_coordinates():
     if not api_key:
         return jsonify({"error": "GEMINI_API_KEY environment variable not set."})
 

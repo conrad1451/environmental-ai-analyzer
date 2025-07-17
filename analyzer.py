@@ -155,7 +155,7 @@ def get_county_city_from_coordinates_batch():
 
     return jsonify(results)
 
-# --- NEW HELPER FUNCTION ---
+# CHQ: Gemini AI debugged to remove extra characters inserted by AI prompt 
 def _process_single_coordinate(coords, api_key):
     """Helper function to process a single coordinate set for the batch endpoint.
     It calls the Gemini API for one coordinate and returns its processed result."""
@@ -203,45 +203,66 @@ def _process_single_coordinate(coords, api_key):
         # Gemini's response structure: response_json['candidates'][0]['content']['parts'][0]['text']
         gemini_text = response_json.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text')
 
+        # CHQ: Gemini AI modified parsing logic
         if gemini_text:
-            # Parse the JSON string returned by Gemini. This is critical.
-            # Gemini often returns the JSON as a string within its 'text' field.
+            # --- START OF MODIFIED PARSING LOGIC ---
+            # 1. Strip common problematic prefixes/suffixes like newlines, backticks, "json\n"
+            cleaned_gemini_text = gemini_text.strip()
+            # If Gemini sometimes wraps in single quotes, remove them
+            if cleaned_gemini_text.startswith("'") and cleaned_gemini_text.endswith("'"):
+                cleaned_gemini_text = cleaned_gemini_text[1:-1]
+            
+            # If Gemini includes "json\n" or similar, try to find the actual JSON start
+            # This is robust because it finds the first '{' and last '}'
+            json_start_index = cleaned_gemini_text.find('{')
+            json_end_index = cleaned_gemini_text.rfind('}')
+
+            if json_start_index != -1 and json_end_index != -1 and json_end_index > json_start_index:
+                actual_json_string = cleaned_gemini_text[json_start_index : json_end_index + 1]
+            else:
+                # Fallback if no valid JSON structure is found
+                logging.warning(f"Could not find valid JSON delimiters in Gemini response for ({decimal_latitude}, {decimal_longitude}): {cleaned_gemini_text}")
+                return {
+                    "latitude": decimal_latitude,
+                    "longitude": decimal_longitude,
+                    "error": f"Gemini response did not contain parsable JSON structure: {cleaned_gemini_text[:150]}..."
+                }
+
+            # --- END OF MODIFIED PARSING LOGIC ---
+
             try:
-                parsed_gemini_response = json.loads(gemini_text)
+                parsed_gemini_response = json.loads(actual_json_string) # Use the extracted string
                 return {
                     "latitude": decimal_latitude,
                     "longitude": decimal_longitude,
                     "county": parsed_gemini_response.get('county'),
-                    "city/town": parsed_gemini_response.get('city/town')
-                    # If you need to pass an original ID from ETL to here and back,
-                    # you'd add it to 'coords' dict and include it in the return.
+                    "city/town": parsed_gemini_response.get('city/town'),
+                    "gbifID_original_index": coords.get('gbifID_original_index') # IMPORTANT: Pass this back!
                 }
             except json.JSONDecodeError as e:
-                logging.error(f"Failed to parse Gemini's JSON text for ({decimal_latitude}, {decimal_longitude}): {gemini_text}. Error: {e}")
+                logging.error(f"Failed to parse CLEANED Gemini's JSON text for ({decimal_latitude}, {decimal_longitude}): {actual_json_string}. Error: {e}")
                 return {
                     "latitude": decimal_latitude,
                     "longitude": decimal_longitude,
-                    "error": f"Malformed JSON from Gemini: {gemini_text[:100]}... Error: {e}" # Truncate for log
+                    "error": f"Malformed JSON from Gemini (after cleaning): {actual_json_string[:100]}... Error: {e}",
+                    "gbifID_original_index": coords.get('gbifID_original_index') # IMPORTANT: Pass this back!
                 }
         else:
             logging.warning(f"Gemini response text was empty for ({decimal_latitude}, {decimal_longitude}). Full response: {response_json}")
             return {
                 "latitude": decimal_latitude,
                 "longitude": decimal_longitude,
-                "error": "Gemini response text was empty or malformed."
+                "error": "Gemini response text was empty or malformed.",
+                "gbifID_original_index": coords.get('gbifID_original_index') # IMPORTANT: Pass this back!
             }
     except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
-        # Catch network errors, timeouts, HTTP errors, and JSON decoding errors from requests.post
-        error_detail = str(e)
-        if hasattr(e, 'response') and e.response is not None:
-            error_detail = f"HTTP Status {e.response.status_code}: {e.response.text}"
-        logging.error(f"Error processing coordinate ({decimal_latitude}, {decimal_longitude}): {error_detail}")
+        # ... (existing error handling) ...
         return {
             "latitude": decimal_latitude,
             "longitude": decimal_longitude,
-            "error": error_detail
+            "error": error_detail,
+            "gbifID_original_index": coords.get('gbifID_original_index') # IMPORTANT: Pass this back!
         }
-
 
 @app.route('/aichat')
 def aichat_endpoint():
@@ -265,7 +286,7 @@ def aichat_endpoint():
 
     try:
         response = requests.post(url, headers=headers, data=json.dumps(data))
-        response.raise_for_status()
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
         response_json = response.json()
         return jsonify(response_json)
     except requests.exceptions.RequestException as e:

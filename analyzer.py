@@ -1,4 +1,4 @@
-# analyzer
+# analyzer.py
 
 from flask import Flask, jsonify, request # Import request
 from flask_cors import CORS
@@ -7,6 +7,7 @@ import requests
 import json
 import os
 import logging # Import logging
+import concurrent.futures # For concurrent API calls to Gemini
 
 app = Flask(__name__)
 CORS(app)
@@ -113,6 +114,112 @@ def get_county_city_from_coordinates():
         logging.error(f"Error decoding JSON response from Gemini in /gemini-chat. Response content: {response.text}")
         return jsonify({"error": "Error decoding JSON response."}), 500
      
+
+# CHQ: Gemini AI generated
+@app.route('/countycityfromcoordinates_batch', methods=['POST'])
+# CHQ: Gemini AI generated
+def get_county_city_from_coordinates_batch():
+    if not api_key:
+        logging.error("API key missing in /countycityfromcoordinates_batch request.")
+        return jsonify({"error": "GEMINI_PERSONAL_API_KEY environment variable not set."}), 500
+
+    # Expect a JSON array of coordinate objects in the request body
+    try:
+        batch_data = request.get_json()
+        if not isinstance(batch_data, list):
+            return jsonify({"error": "Request body must be a JSON array of coordinate objects."}), 400
+    except Exception as e:
+        logging.error(f"Error parsing batch request JSON: {e}")
+        return jsonify({"error": f"Invalid JSON in request body: {e}"}), 400
+
+    results = []
+    # Using ThreadPoolExecutor to make concurrent API calls to Gemini
+    # Adjust max_workers based on your server's capacity and Gemini's rate limits
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_coords = {
+            executor.submit(_process_single_coordinate, coords, api_key): coords
+            for coords in batch_data
+        }
+        for future in concurrent.futures.as_completed(future_to_coords):
+            coords = future_to_coords[future]
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as exc:
+                logging.error(f"Coordinate {coords} generated an exception: {exc}")
+                results.append({
+                    "latitude": coords.get('latitude'),
+                    "longitude": coords.get('longitude'),
+                    "error": str(exc)
+                })
+
+    return jsonify(results)
+ 
+# CHQ: Gemini AI generated
+def _process_single_coordinate(coords, api_key):
+    """Helper function to process a single coordinate set for the batch endpoint."""
+    decimal_latitude = coords.get('latitude')
+    decimal_longitude = coords.get('longitude')
+    coordinate_uncertainty = coords.get('coordinate_uncertainty')
+
+    if not decimal_latitude or not decimal_longitude:
+        return {
+            "latitude": decimal_latitude,
+            "longitude": decimal_longitude,
+            "error": "Missing 'latitude' or longitude parameter."
+        }
+
+    prompt_text = f"""what county and city is the following in? Make the response like so:
+
+    {{"county": "[County name]",
+    "city/town": "[city/town name]"}}
+
+    decimal latitude: {decimal_latitude}
+    decimal longitude: {decimal_longitude}
+    coordinate uncertainty: {coordinate_uncertainty if coordinate_uncertainty else 'not specified'}"""
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    headers = {'Content-Type': 'application/json'}
+    data = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt_text}
+                ]
+            }
+        ]
+    }
+
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(data))
+        response.raise_for_status()
+        response_json = response.json()
+
+        # Extract the county and city/town from Gemini's response
+        # Assuming Gemini returns a JSON string in its text part
+        gemini_text = response_json.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text')
+        if gemini_text:
+            # Parse the JSON string returned by Gemini
+            parsed_gemini_response = json.loads(gemini_text)
+            return {
+                "latitude": decimal_latitude,
+                "longitude": decimal_longitude,
+                "county": parsed_gemini_response.get('county'),
+                "city/town": parsed_gemini_response.get('city/town')
+            }
+        else:
+            return {
+                "latitude": decimal_latitude,
+                "longitude": decimal_longitude,
+                "error": "Gemini response text was empty or malformed."
+            }
+    except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+        logging.error(f"Error processing coordinate ({decimal_latitude}, {decimal_longitude}): {e}")
+        return {
+            "latitude": decimal_latitude,
+            "longitude": decimal_longitude,
+            "error": str(e)
+        }
 
 @app.route('/aichat')
 def aichat_endpoint(): # Renamed the function to resolve the conflict

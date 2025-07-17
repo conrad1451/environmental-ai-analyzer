@@ -1,6 +1,8 @@
 # analyzer
 
 from flask import Flask, jsonify, request # Import request
+from flask_cors import CORS
+
 import requests
 import json
 import os

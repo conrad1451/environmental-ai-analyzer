@@ -15,7 +15,8 @@ CORS(app)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # It's better to store your API key as an environment variable
-api_key = os.environ.get("GEMINI_PERSONAL_API_KEY")
+# api_key = os.environ.get("GEMINI_PERSONAL_API_KEY")
+api_key = os.environ.get("GEMINI_SCHOOL_API_KEY")
 
 if not api_key:
     logging.error("Error: GEMINI_PERSONAL_API_KEY environment variable not set at app startup.")

@@ -52,20 +52,24 @@ def get_county_city_from_coordinates():
     if not decimal_latitude or not decimal_longitude:
         return jsonify({"error": "Missing 'latitude' or longitude parameter in the query string."})
 
+    # Construct the prompt for the Gemini API
+    prompt_text = f"""what county and city is the following in? Make the response like so:
+
+    {{"county": [County name],
+    "city/town": [city/town name]}}
+
+    decimal latitude: {decimal_latitude}
+    decimal longitude: {decimal_longitude}
+    coordinate uncertainty: {coordinate_uncertainty if coordinate_uncertainty else 'not specified'}""" # Added a fallback for uncertainty
+
+
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
     data = {
         "contents": [
             {
                 "parts": [
-                    {"text": f"""what county and city is the following in? Make the response like so:
-
-                    {{"county": [County name],
-                    "city/town": [city/town name]}}
-
-                    decimal latitude: {decimal_latitude}
-                    decimal longitude: {decimal_longitude} 
-                    coordinate uncertainty: {coordinate_uncertainty}"""}
+                    {"text": prompt_text}
                 ]
             }
         ]

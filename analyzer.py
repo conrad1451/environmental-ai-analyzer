@@ -6,7 +6,7 @@ import requests
 import json
 import os
 import logging
-import concurrent.futures # <-- NEW IMPORT
+import concurrent.futures
 
 app = Flask(__name__)
 CORS(app)
@@ -15,11 +15,10 @@ CORS(app)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # It's better to store your API key as an environment variable
-# api_key = os.environ.get("GEMINI_PERSONAL_API_KEY")
 api_key = os.environ.get("GEMINI_SCHOOL_API_KEY")
 
 if not api_key:
-    logging.error("Error: GEMINI_PERSONAL_API_KEY environment variable not set at app startup.")
+    logging.error("Error: GEMINI_SCHOOL_API_KEY environment variable not set at app startup.")
 
 @app.route('/')
 def hello_world():
@@ -29,7 +28,7 @@ def hello_world():
 def explain_ai():
     if not api_key:
         logging.error("API key missing in /explain_ai request.")
-        return jsonify({"error": "GEMINI_PERSONAL_API_KEY environment variable not set."}), 500
+        return jsonify({"error": "GEMINI_SCHOOL_API_KEY environment variable not set."}), 500
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
@@ -57,7 +56,7 @@ def explain_ai():
 def get_county_city_from_coordinates():
     if not api_key:
         logging.error("API key missing in /countycityfromcoordinates request.")
-        return jsonify({"error": "GEMINI_PERSONAL_API_KEY environment variable not set."}), 500
+        return jsonify({"error": "GEMINI_SCHOOL_API_KEY environment variable not set."}), 500
 
     decimal_latitude = request.args.get('latitude')
     decimal_longitude = request.args.get('longitude')
@@ -75,26 +74,34 @@ def get_county_city_from_coordinates():
         return jsonify({"error": "Missing 'latitude' or longitude parameter in the query string."})
 
     # Construct the prompt for the Gemini API
-    prompt_text = f"""what county and city is the following in? Make the response like so:
-
-    {{"county": "[County name]",
-    "city/town": "[city/town name]"}}
-
+    prompt_text = f"""what county and city is the following in?
     decimal latitude: {decimal_latitude}
     decimal longitude: {decimal_longitude}
     coordinate uncertainty: {coordinate_uncertainty if coordinate_uncertainty else 'not specified'}"""
 
-
+    # CHQ: Gemini AI added generationConfig to specify structured output
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
     data = {
         "contents": [
             {
+                "role": "user",
                 "parts": [
                     {"text": prompt_text}
                 ]
             }
-        ]
+        ],
+        "generationConfig": { # NEW: Specify structured output
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "county": {"type": "STRING"},
+                    "city/town": {"type": "STRING"}
+                },
+                "propertyOrdering": ["county", "city/town"]
+            }
+        }
     }
     logging.info(f"Sending data to Gemini: {json.dumps(data)}")
 
@@ -104,7 +111,15 @@ def get_county_city_from_coordinates():
         response.raise_for_status()
         response_json = response.json()
         logging.info("Gemini API call successful for /countycityfromcoordinates.")
-        return jsonify(response_json)
+        
+        # Parse the structured response directly
+        if response_json.get('candidates') and response_json['candidates'][0].get('content') and response_json['candidates'][0]['content'].get('parts'):
+            # The content will already be parsed JSON if responseMimeType is application/json
+            parsed_gemini_response = json.loads(response_json['candidates'][0]['content']['parts'][0]['text'])
+            return jsonify(parsed_gemini_response) # Return only the relevant part
+        else:
+            logging.warning(f"Gemini response did not contain expected structured content: {response_json}")
+            return jsonify({"error": "Gemini response did not contain expected structured content."}), 500
     except requests.exceptions.RequestException as e:
         the_error_msg = f"""Error during API call to Gemini in /countycityfromcoordinates: {e}.
         Response status: {response.status_code if response else 'N/A'}, content: {response.text if response else 'N/A'}"""
@@ -120,9 +135,8 @@ def get_county_city_from_coordinates():
 def get_county_city_from_coordinates_batch():
     if not api_key:
         logging.error("API key missing in /countycityfromcoordinates_batch request.")
-        return jsonify({"error": "GEMINI_PERSONAL_API_KEY environment variable not set."}), 500
+        return jsonify({"error": "GEMINI_SCHOOL_API_KEY environment variable not set."}), 500
 
-    # Expect a JSON array of coordinate objects in the request body
     try:
         batch_data = request.get_json()
         if not isinstance(batch_data, list):
@@ -135,14 +149,13 @@ def get_county_city_from_coordinates_batch():
     # Using ThreadPoolExecutor to make concurrent API calls to Gemini
     # Adjust max_workers based on your server's capacity and Gemini's rate limits
     # A value of 5-10 is often a good starting point for external APIs
-    # If Gemini has a very strict per-second rate limit, you might need to lower this.
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         future_to_coords = {
             executor.submit(_process_single_coordinate, coords, api_key): coords
             for coords in batch_data
         }
         for future in concurrent.futures.as_completed(future_to_coords):
-            coords = future_to_coords[future] # Retrieve the original coordinates to associate with the result
+            coords = future_to_coords[future]
             try:
                 result = future.result()
                 results.append(result)
@@ -151,12 +164,12 @@ def get_county_city_from_coordinates_batch():
                 results.append({
                     "latitude": coords.get('latitude'),
                     "longitude": coords.get('longitude'),
-                    "error": str(exc)
+                    "error": str(exc),
+                    "gbifID_original_index": coords.get('gbifID_original_index') # Ensure this is passed back even on error
                 })
 
     return jsonify(results)
 
-# CHQ: Gemini AI debugged to remove extra characters inserted by AI prompt 
 def _process_single_coordinate(coords, api_key):
     """Helper function to process a single coordinate set for the batch endpoint.
     It calls the Gemini API for one coordinate and returns its processed result."""
@@ -164,100 +177,69 @@ def _process_single_coordinate(coords, api_key):
     decimal_longitude = coords.get('longitude')
     coordinate_uncertainty = coords.get('coordinate_uncertainty')
 
-    # Basic validation for the individual coordinate data
-    if decimal_latitude is None or decimal_longitude is None: # Use 'is None' for clearer check
+    if decimal_latitude is None or decimal_longitude is None:
         return {
-            "latitude": decimal_latitude, # Return what was received for debugging
+            "latitude": decimal_latitude,
             "longitude": decimal_longitude,
-            "error": "Missing 'latitude' or longitude parameter in coordinate object."
+            "error": "Missing 'latitude' or longitude parameter in coordinate object.",
+            "gbifID_original_index": coords.get('gbifID_original_index')
         }
 
-    # Construct the prompt for the Gemini API
-    # Ensure the prompt asks for the response in the exact JSON format you expect.
-    prompt_text = f"""what county and city is the following in? Make the response like so, ensure it's valid JSON:
-
-    {{"county": "[County name]",
-    "city/town": "[city/town name]"}}
-
+    prompt_text = f"""what county and city is the following in?
     decimal latitude: {decimal_latitude}
     decimal longitude: {decimal_longitude}
     coordinate uncertainty: {coordinate_uncertainty if coordinate_uncertainty else 'not specified'}"""
 
+    # CHQ: Gemini AI added generationConfig to specify structured output
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
     data = {
         "contents": [
             {
+                "role": "user",
                 "parts": [
                     {"text": prompt_text}
                 ]
             }
-        ]
+        ],
+        "generationConfig": { # NEW: Specify structured output
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "county": {"type": "STRING"},
+                    "city/town": {"type": "STRING"}
+                },
+                "propertyOrdering": ["county", "city/town"]
+            }
+        }
     }
 
     try:
         response = requests.post(url, headers=headers, data=json.dumps(data))
-        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        response.raise_for_status()
         response_json = response.json()
 
-        # Extract the county and city/town from Gemini's response
-        # Gemini's response structure: response_json['candidates'][0]['content']['parts'][0]['text']
-        gemini_text = response_json.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text')
-
-        # CHQ: Gemini AI modified parsing logic
-        if gemini_text:
-            # --- START OF MODIFIED PARSING LOGIC ---
-            # 1. Strip common problematic prefixes/suffixes like newlines, backticks, "json\n"
-            cleaned_gemini_text = gemini_text.strip()
-            # If Gemini sometimes wraps in single quotes, remove them
-            if cleaned_gemini_text.startswith("'") and cleaned_gemini_text.endswith("'"):
-                cleaned_gemini_text = cleaned_gemini_text[1:-1]
-            
-            # If Gemini includes "json\n" or similar, try to find the actual JSON start
-            # This is robust because it finds the first '{' and last '}'
-            json_start_index = cleaned_gemini_text.find('{')
-            json_end_index = cleaned_gemini_text.rfind('}')
-
-            if json_start_index != -1 and json_end_index != -1 and json_end_index > json_start_index:
-                actual_json_string = cleaned_gemini_text[json_start_index : json_end_index + 1]
-            else:
-                # Fallback if no valid JSON structure is found
-                logging.warning(f"Could not find valid JSON delimiters in Gemini response for ({decimal_latitude}, {decimal_longitude}): {cleaned_gemini_text}")
-                return {
-                    "latitude": decimal_latitude,
-                    "longitude": decimal_longitude,
-                    "error": f"Gemini response did not contain parsable JSON structure: {cleaned_gemini_text[:150]}..."
-                }
-
-            # --- END OF MODIFIED PARSING LOGIC ---
-
-            try:
-                parsed_gemini_response = json.loads(actual_json_string) # Use the extracted string
-                return {
-                    "latitude": decimal_latitude,
-                    "longitude": decimal_longitude,
-                    "county": parsed_gemini_response.get('county'),
-                    "city/town": parsed_gemini_response.get('city/town'),
-                    "gbifID_original_index": coords.get('gbifID_original_index') # IMPORTANT: Pass this back!
-                }
-            except json.JSONDecodeError as e:
-                logging.error(f"Failed to parse CLEANED Gemini's JSON text for ({decimal_latitude}, {decimal_longitude}): {actual_json_string}. Error: {e}")
-                return {
-                    "latitude": decimal_latitude,
-                    "longitude": decimal_longitude,
-                    "error": f"Malformed JSON from Gemini (after cleaning): {actual_json_string[:100]}... Error: {e}",
-                    "gbifID_original_index": coords.get('gbifID_original_index') # IMPORTANT: Pass this back!
-                }
-        else:
-            logging.warning(f"Gemini response text was empty for ({decimal_latitude}, {decimal_longitude}). Full response: {response_json}")
+        # Extract the structured response directly
+        if response_json.get('candidates') and response_json['candidates'][0].get('content') and response_json['candidates'][0]['content'].get('parts'):
+            # The content will already be parsed JSON if responseMimeType is application/json
+            parsed_gemini_response = json.loads(response_json['candidates'][0]['content']['parts'][0]['text'])
             return {
                 "latitude": decimal_latitude,
                 "longitude": decimal_longitude,
-                "error": "Gemini response text was empty or malformed.",
-                "gbifID_original_index": coords.get('gbifID_original_index') # IMPORTANT: Pass this back!
+                "county": parsed_gemini_response.get('county'),
+                "city/town": parsed_gemini_response.get('city/town'),
+                "gbifID_original_index": coords.get('gbifID_original_index')
+            }
+        else:
+            logging.warning(f"Gemini response did not contain expected structured content for ({decimal_latitude}, {decimal_longitude}). Full response: {response_json}")
+            return {
+                "latitude": decimal_latitude,
+                "longitude": decimal_longitude,
+                "error": "Gemini response did not contain expected structured content.",
+                "gbifID_original_index": coords.get('gbifID_original_index')
             }
     except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
-        # Catch network errors, timeouts, HTTP errors, and JSON decoding errors from requests.post
         error_detail = str(e)
         if hasattr(e, 'response') and e.response is not None:
             error_detail = f"HTTP Status {e.response.status_code}: {e.response.text}"
@@ -266,13 +248,13 @@ def _process_single_coordinate(coords, api_key):
             "latitude": decimal_latitude,
             "longitude": decimal_longitude,
             "error": error_detail,
-            "gbifID_original_index": coords.get('gbifID_original_index') # IMPORTANT: Pass this back!
+            "gbifID_original_index": coords.get('gbifID_original_index')
         }
 
 @app.route('/aichat')
 def aichat_endpoint():
     if not api_key:
-        return jsonify({"error": "GEMINI_PERSONAL_API_KEY environment variable not set."})
+        return jsonify({"error": "GEMINI_SCHOOL_API_KEY environment variable not set."})
 
     user_input = request.args.get('text')
 
@@ -291,7 +273,7 @@ def aichat_endpoint():
 
     try:
         response = requests.post(url, headers=headers, data=json.dumps(data))
-        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        response.raise_for_status()
         response_json = response.json()
         return jsonify(response_json)
     except requests.exceptions.RequestException as e:
@@ -300,7 +282,4 @@ def aichat_endpoint():
         return jsonify({"error": "Error decoding JSON response."})
 
 if __name__ == '__main__':
-    # When deploying to Render/Heroku, they handle the host and port
-    # For local testing, you can use app.run(debug=True)
-    # For production, it's recommended to use a WSGI server like Gunicorn
     app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000), debug=True)

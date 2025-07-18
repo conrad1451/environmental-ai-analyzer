@@ -161,6 +161,10 @@ def get_county_city_from_coordinates():
 
 @app.route('/countycityfromcoordinates_batch', methods=['POST'])
 def get_county_city_from_coordinates_batch():
+    counter = 0
+
+    partititon_amount = 10
+
     if not api_key:
         logging.error("API key missing in /countycityfromcoordinates_batch request.")
         return jsonify({"error": "GEMINI_SCHOOL_API_KEY environment variable not set."}), 500
@@ -195,6 +199,9 @@ def get_county_city_from_coordinates_batch():
                     "error": str(exc),
                     "gbifID_original_index": coords.get('gbifID_original_index') # Ensure this is passed back even on error
                 })
+            if counter % 2 == partititon_amount:
+                time.delay()
+            counter += 1
 
     return jsonify(results)
 

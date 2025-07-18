@@ -181,7 +181,9 @@ def get_county_city_from_coordinates_batch():
     # Using ThreadPoolExecutor to make concurrent API calls to Gemini
     # Adjust max_workers based on your server's capacity and Gemini's rate limits
     # A value of 5-10 is often a good starting point for external APIs
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+
+    # with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         future_to_coords = {
             executor.submit(_process_single_coordinate, coords, api_key): coords
             for coords in batch_data

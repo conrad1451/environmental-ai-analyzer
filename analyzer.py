@@ -7,15 +7,24 @@ import json
 import os
 import logging
 import concurrent.futures
+import uuid # For unique filenames
+
+# --- NEW IMPORTS FOR NATIVE BATCHING ---
+from google.cloud import storage
+import google.generativelanguage as glm # For the Gemini API client
+from google.api_core.client_options import ClientOptions
+from google.api_core.exceptions import GoogleAPIError
 
 app = Flask(__name__)
 CORS(app)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__) # Use the logger instance
 
-# It's better to store your API key as an environment variable
-api_key = os.environ.get("GEMINI_SCHOOL_API_KEY")
+# Authentication for direct API key access (for non-batch endpoints)
+# api_key = os.environ.get("GEMINI_PERSONAL_API_KEY") # Original, for direct API key use
+api_key = os.environ.get("GEMINI_SCHOOL_API_KEY") # Current API key from user
 
 if not api_key:
     logging.error("Error: GEMINI_SCHOOL_API_KEY environment variable not set at app startup.")
@@ -288,9 +297,119 @@ def _process_single_coordinate(coords, api_key):
             "gbifID_original_index": coords.get('gbifID_original_index')
         }
 
-# @app.route('/countycityfromcoordinates_nativebatch', methods=['POST'])
-# def get_county_city_from_coordinates_native_batching():
-#     return 1
+@app.route('/countycityfromcoordinates_nativebatch', methods=['POST'])
+def get_county_city_from_coordinates_native_batching():
+    if not storage_client or not genai_client:
+        logger.error("Google Cloud clients not initialized. Cannot perform native batching.")
+        return jsonify({"error": "Server not configured for native batching (GCP clients uninitialized)."}), 500
+    
+    if not all([GCS_INPUT_BUCKET, GCS_OUTPUT_BUCKET, GCP_PROJECT_ID]):
+        logger.error("Missing GCS_INPUT_BUCKET, GCS_OUTPUT_BUCKET, or GCP_PROJECT_ID environment variables.")
+        return jsonify({"error": "Server not fully configured for native batching (missing GCS/Project env vars)."}), 500
+
+    try:
+        batch_data = request.get_json()
+        if not isinstance(batch_data, list) or not batch_data:
+            return jsonify({"error": "Request body must be a non-empty JSON array of coordinate objects."}), 400
+    except Exception as e:
+        logger.error(f"Error parsing native batch request JSON: {e}")
+        return jsonify({"error": f"Invalid JSON in request body: {e}"}), 400
+
+    # 1. Prepare input data as JSONL
+    input_lines = []
+    for item in batch_data:
+        decimal_latitude = item.get('latitude')
+        decimal_longitude = item.get('longitude')
+        coordinate_uncertainty = item.get('coordinate_uncertainty')
+        gbif_id_original_index = item.get('gbifID_original_index') # Pass through original index
+
+        if decimal_latitude is None or decimal_longitude is None:
+            logger.warning(f"Skipping malformed item in batch: {item}")
+            continue
+
+        prompt_text = f"""what county and city is the following in?
+        decimal latitude: {decimal_latitude}
+        decimal longitude: {decimal_longitude}
+        coordinate uncertainty: {coordinate_uncertainty if coordinate_uncertainty else 'not specified'}"""
+        
+        # Each line in the JSONL input file represents one request to the model
+        input_entry = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": prompt_text}
+                    ]
+                }
+            ],
+            # Include metadata to map results back later
+            "metadata": {
+                "original_latitude": str(decimal_latitude),
+                "original_longitude": str(decimal_longitude),
+                "gbifID_original_index": str(gbif_id_original_index)
+            }
+        }
+        input_lines.append(json.dumps(input_entry))
+
+    if not input_lines:
+        return jsonify({"error": "No valid coordinate objects found in the batch data."}), 400
+
+    input_jsonl_content = "\n".join(input_lines)
+
+    # 2. Upload input file to GCS
+    unique_id = str(uuid.uuid4())
+    input_blob_name = f"batch_input/{unique_id}/input.jsonl"
+    output_prefix = f"batch_output/{unique_id}/" # Gemini will add files under this prefix
+
+    try:
+        input_bucket = storage_client.bucket(GCS_INPUT_BUCKET)
+        input_blob = input_bucket.blob(input_blob_name)
+        input_blob.upload_from_string(input_jsonl_content, content_type="application/jsonl")
+        input_uri = f"gs://{GCS_INPUT_BUCKET}/{input_blob_name}"
+        output_uri = f"gs://{GCS_OUTPUT_BUCKET}/{output_prefix}"
+        logger.info(f"Uploaded input to GCS: {input_uri}")
+    except Exception as e:
+        logger.error(f"Error uploading input to GCS: {e}", exc_info=True)
+        return jsonify({"error": f"Failed to upload input to GCS: {e}"}), 500
+
+    # 3. Initiate the Batch Job with Generative Language API
+    try:
+        request_body = glm.BatchGenerateContentsRequest(
+            model=f"models/gemini-2.0-flash", # Specify the model
+            input_content_uri=input_uri,
+            output_content_uri=output_uri,
+            generation_config=glm.GenerationConfig( # Apply structured output to the batch
+                response_mime_type="application/json",
+                response_schema={
+                    "type": "OBJECT",
+                    "properties": {
+                        "county": {"type": "STRING"},
+                        "city/town": {"type": "STRING"}
+                    },
+                    "propertyOrdering": ["county", "city/town"]
+                }
+            )
+        )
+        
+        # This initiates the asynchronous operation
+        operation = genai_client.batch_generate_contents(request=request_body)
+        logger.info(f"Initiated native batch job: {operation.name}")
+        
+        return jsonify({
+            "status": "Batch job initiated",
+            "operation_name": operation.name,
+            "input_uri": input_uri,
+            "output_uri_prefix": output_uri,
+            "message": "The ETL script will need to poll this operation_name and retrieve results from GCS."
+        }), 202 # 202 Accepted, as the job is asynchronous
+
+    except GoogleAPIError as e:
+        logger.error(f"Google API error initiating batch job: {e}", exc_info=True)
+        return jsonify({"error": f"Failed to initiate native batch job with Gemini API: {e.message}"}), 500
+    except Exception as e:
+        logger.error(f"Unexpected error initiating batch job: {e}", exc_info=True)
+        return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
+
 
 @app.route('/aichat')
 def aichat_endpoint():

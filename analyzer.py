@@ -20,6 +20,35 @@ api_key = os.environ.get("GEMINI_SCHOOL_API_KEY")
 if not api_key:
     logging.error("Error: GEMINI_SCHOOL_API_KEY environment variable not set at app startup.")
 
+
+# --- Configuration for Native Batching ---
+# These should be set as environment variables or secrets for your Flask app
+GCS_INPUT_BUCKET = os.environ.get("GCS_INPUT_BUCKET")
+GCS_OUTPUT_BUCKET = os.environ.get("GCS_OUTPUT_BUCKET")
+GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID") # Your Google Cloud Project ID
+
+# Initialize GCS client (will use GOOGLE_APPLICATION_CREDENTIALS by default)
+try:
+    storage_client = storage.Client(project=GCP_PROJECT_ID)
+    logger.info("Google Cloud Storage client initialized successfully.")
+except Exception as e:
+    logger.error(f"Error initializing Google Cloud Storage client: {e}. Ensure GOOGLE_APPLICATION_CREDENTIALS is set.")
+    storage_client = None # Set to None if initialization fails
+
+# Initialize Generative Language client for batch operations
+# This also uses GOOGLE_APPLICATION_CREDENTIALS by default
+try:
+    # Use ClientOptions to specify the endpoint, if necessary (e.g., for specific regions)
+    # For global endpoint, this might not be strictly needed but good practice.
+    genai_client_options = ClientOptions(api_endpoint="generativelanguage.googleapis.com")
+    genai_client = glm.GenerativeServiceClient(client_options=genai_client_options)
+    logger.info("Generative Language client initialized successfully.")
+except Exception as e:
+    logger.error(f"Error initializing Generative Language client: {e}. Ensure GOOGLE_APPLICATION_CREDENTIALS is set.")
+    genai_client = None # Set to None if initialization fails
+
+
+
 @app.route('/')
 def hello_world():
     return 'Conrad deployed another AI Flask App!'
@@ -130,7 +159,6 @@ def get_county_city_from_coordinates():
         return jsonify({"error": "Error decoding JSON response."}), 500
 
 
-# --- NEW BATCH ENDPOINT ---
 @app.route('/countycityfromcoordinates_batch', methods=['POST'])
 def get_county_city_from_coordinates_batch():
     if not api_key:
@@ -250,6 +278,10 @@ def _process_single_coordinate(coords, api_key):
             "error": error_detail,
             "gbifID_original_index": coords.get('gbifID_original_index')
         }
+
+# @app.route('/countycityfromcoordinates_nativebatch', methods=['POST'])
+# def get_county_city_from_coordinates_native_batching():
+#     return 1
 
 @app.route('/aichat')
 def aichat_endpoint():

@@ -3,20 +3,13 @@ flask-cors
 requests
 pyyaml
 
-# Google Cloud Libraries - Pinning to known stable versions for Python 3.11
-google-cloud-storage==2.11.0
-google-cloud-bigquery==3.10.0
-gcsfs==2023.1.0
+# Google Cloud Libraries - Use latest stable versions and let them manage sub-dependencies
+google-cloud-storage
+google-cloud-bigquery
+gcsfs
 
-# Core Google Generative AI SDK and its critical dependencies
-# These versions are chosen for known compatibility with Python 3.11 and each other.
-google-generativeai==0.6.0         # A very stable release of the new SDK
-google-api-core==2.11.0            # Compatible with the above
-google-auth==2.22.0                # Compatible
-googleapis-common-protos==1.60.0   # Compatible
-protobuf==3.20.3                   # CRITICAL: This specific protobuf version is often key for older GC libs on 3.11
-grpcio==1.58.0                     # CRITICAL: This specific grpcio version is often key
-grpcio-status==1.58.0              # Compatible
+# Core Google Generative AI SDK - Use latest stable version
+google-generativeai
 
 # Other project dependencies
 pandas
@@ -24,10 +17,18 @@ python-dateutil
 tenacity
 pyarrow
 
+# IMPORTANT: Remove the following lines from your requirements.txt
+# google-api-core==2.11.0
+# google-auth==2.22.0
+# googleapis-common-protos==1.60.0
+# protobuf==3.20.3
+# grpcio==1.58.0
+# grpcio-status==1.58.0
+
 # If you are using langchain, include these. Otherwise, remove them.
-# langchain==0.2.6
-# langchain-community==0.2.6
-# langchain-core==0.2.10
-# langchain-google-genai==1.0.7
-# langchain-text-splitters==0.2.2
-# langsmith==0.1.82
+# langchain
+# langchain-community
+# langchain-core
+# langchain-google-genai
+# langchain-text-splitters
+# langsmith

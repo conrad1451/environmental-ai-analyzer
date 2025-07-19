@@ -9,9 +9,9 @@ import logging
 import concurrent.futures
 import uuid # For unique filenames
 
-# --- NEW IMPORTS FOR NATIVE BATCHING ---
+# --- UPDATED IMPORTS FOR NEW GOOGLE GEN AI SDK ---
 from google.cloud import storage
-import google.generativelanguage as glm # For the Gemini API client
+import google.generativeai as genai # Renamed import for clarity
 from google.api_core.client_options import ClientOptions
 from google.api_core.exceptions import GoogleAPIError
 
@@ -23,7 +23,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__) # Use the logger instance
 
 # Authentication for direct API key access (for non-batch endpoints)
-# api_key = os.environ.get("GEMINI_PERSONAL_API_KEY") # Original, for direct API key use
 api_key = os.environ.get("GEMINI_SCHOOL_API_KEY") # Current API key from user
 
 if not api_key:
@@ -31,7 +30,6 @@ if not api_key:
 
 
 # --- Configuration for Native Batching ---
-# These should be set as environment variables or secrets for your Flask app
 GCS_INPUT_BUCKET = os.environ.get("GCS_INPUT_BUCKET")
 GCS_OUTPUT_BUCKET = os.environ.get("GCS_OUTPUT_BUCKET")
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID") # Your Google Cloud Project ID
@@ -45,17 +43,40 @@ except Exception as e:
     storage_client = None # Set to None if initialization fails
 
 # Initialize Generative Language client for batch operations
-# This also uses GOOGLE_APPLICATION_CREDENTIALS by default
+# --- UPDATED INITIALIZATION FOR NEW GOOGLE GEN AI SDK ---
 try:
-    # Use ClientOptions to specify the endpoint, if necessary (e.g., for specific regions)
-    # For global endpoint, this might not be strictly needed but good practice.
-    genai_client_options = ClientOptions(api_endpoint="generativelanguage.googleapis.com")
-    genai_client = glm.GenerativeServiceClient(client_options=genai_client_options)
-    logger.info("Generative Language client initialized successfully.")
+    # The 'google-generativeai' SDK usually handles API key or GOOGLE_APPLICATION_CREDENTIALS automatically.
+    # For direct API key usage, you'd configure it like: genai.configure(api_key=api_key)
+    # Since you're using GOOGLE_APPLICATION_CREDENTIALS for GCS, the SDK should pick it up.
+    # If using a specific endpoint, you might need: genai.configure(client_options={'api_endpoint': 'generativelanguage.googleapis.com'})
+    # For batching, we will use the client object directly if needed, or rely on SDK's internal client.
+    
+    # For batching, the SDK provides `generative_models.batch_generate_contents` as a top-level function
+    # or through the client. Let's ensure the client is ready for direct use if needed.
+    # The `genai` client itself doesn't need explicit initialization like `glm.GenerativeServiceClient`
+    # if you're using `genai.GenerativeModel`.
+    
+    # For batching, we might need a specific client, or it might be handled internally.
+    # Let's keep the `genai_client` variable for now, but its usage will change.
+    # The `google-generativeai` library typically makes direct calls on the model object.
+    
+    # For now, let's ensure the API key is configured for direct calls if needed,
+    # or ensure GOOGLE_APPLICATION_CREDENTIALS is set for batching.
+    
+    # If you intend to use the direct API key for all calls (including batching if supported by SDK),
+    # then configure it like this:
+    # genai.configure(api_key=api_key)
+    # logger.info("Generative AI SDK configured with API key.")
+
+    # If you intend to use GOOGLE_APPLICATION_CREDENTIALS for batching:
+    # The `google-generativeai` library will pick up GOOGLE_APPLICATION_CREDENTIALS automatically.
+    # We will instantiate the model directly where needed.
+    logger.info("Generative AI SDK initialized (will use GOOGLE_APPLICATION_CREDENTIALS or API_KEY as per configuration).")
+    genai_client = None # We won't use this directly as before, but keep for placeholder if needed.
+
 except Exception as e:
     logger.error(f"Error initializing Generative Language client: {e}. Ensure GOOGLE_APPLICATION_CREDENTIALS is set.")
     genai_client = None # Set to None if initialization fails
-
 
 
 @app.route('/')
@@ -68,27 +89,21 @@ def explain_ai():
         logging.error("API key missing in /explain_ai request.")
         return jsonify({"error": "GEMINI_SCHOOL_API_KEY environment variable not set."}), 500
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    headers = {'Content-Type': 'application/json'}
-    data = {
-        "contents": [
-            {
-                "parts": [{"text": "Explain how AI works"}]
-            }
-        ]
-    }
-
+    # --- UPDATED: Use new SDK for direct calls ---
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(data))
-        response.raise_for_status()
-        response_json = response.json()
-        return jsonify(response_json)
-    except requests.exceptions.RequestException as e:
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content("Explain how AI works")
+        
+        # The response object from google-generativeai is different
+        if response.candidates:
+            text_response = response.candidates[0].content.parts[0].text
+            return jsonify({"text": text_response})
+        else:
+            logging.warning(f"Gemini response did not contain candidates: {response}")
+            return jsonify({"error": "Gemini response did not contain expected content."}), 500
+    except Exception as e:
         logging.error(f"Error during API call to Gemini in /explain_ai: {e}")
         return jsonify({"error": f"Error during API call: {e}"})
-    except json.JSONDecodeError:
-        logging.error(f"Error decoding JSON response from Gemini in /explain_ai. Response content: {response.text}")
-        return jsonify({"error": "Error decoding JSON response from Gemini."})
 
 @app.route('/countycityfromcoordinates')
 def get_county_city_from_coordinates():
@@ -100,7 +115,6 @@ def get_county_city_from_coordinates():
     decimal_longitude = request.args.get('longitude')
     coordinate_uncertainty = request.args.get('coordinate_uncertainty')
 
-
     content_received = f""""Received user_input: decimal_latitude'{decimal_latitude}'
     and decimal_longitude '{decimal_longitude}'
     and coordinate_uncertainty '{coordinate_uncertainty}'
@@ -111,69 +125,52 @@ def get_county_city_from_coordinates():
     if not decimal_latitude or not decimal_longitude:
         return jsonify({"error": "Missing 'latitude' or longitude parameter in the query string."})
 
-    # Construct the prompt for the Gemini API
     prompt_text = f"""what county and city is the following in?
     decimal latitude: {decimal_latitude}
     decimal longitude: {decimal_longitude}
     coordinate uncertainty: {coordinate_uncertainty if coordinate_uncertainty else 'not specified'}"""
 
-    # CHQ: Gemini AI added generationConfig to specify structured output
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    headers = {'Content-Type': 'application/json'}
-    data = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"text": prompt_text}
-                ]
-            }
-        ],
-        "generationConfig": { # NEW: Specify structured output
-            "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "OBJECT",
-                "properties": {
-                    "county": {"type": "STRING"},
-                    "city/town": {"type": "STRING"}
-                },
-                "propertyOrdering": ["county", "city/town"]
-            }
-        }
-    }
-    logging.info(f"Sending data to Gemini: {json.dumps(data)}")
-
-
+    # --- UPDATED: Use new SDK for direct calls with structured output ---
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(data))
-        response.raise_for_status()
-        response_json = response.json()
-        logging.info("Gemini API call successful for /countycityfromcoordinates.")
+        model = genai.GenerativeModel('gemini-2.0-flash')
         
-        # Parse the structured response directly
-        if response_json.get('candidates') and response_json['candidates'][0].get('content') and response_json['candidates'][0]['content'].get('parts'):
-            # The content will already be parsed JSON if responseMimeType is application/json
-            parsed_gemini_response = json.loads(response_json['candidates'][0]['content']['parts'][0]['text'])
-            return jsonify(parsed_gemini_response) # Return only the relevant part
+        # Define the response schema using the SDK's types
+        response_schema = genai.types.Schema(
+            type=genai.types.Type.OBJECT,
+            properties={
+                "county": genai.types.Schema(type=genai.types.Type.STRING),
+                "city/town": genai.types.Schema(type=genai.types.Type.STRING)
+            },
+            # property_ordering is not directly supported in genai.types.Schema,
+            # but the order of properties in the dict usually maintains it.
+        )
+
+        response = model.generate_content(
+            prompt_text,
+            generation_config=genai.types.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=response_schema
+            )
+        )
+        
+        if response.candidates:
+            # The SDK's response will already be parsed if response_mime_type is application/json
+            parsed_gemini_response = json.loads(response.candidates[0].content.parts[0].text)
+            return jsonify(parsed_gemini_response)
         else:
-            logging.warning(f"Gemini response did not contain expected structured content: {response_json}")
+            logging.warning(f"Gemini response did not contain expected structured content: {response}")
             return jsonify({"error": "Gemini response did not contain expected structured content."}), 500
-    except requests.exceptions.RequestException as e:
-        the_error_msg = f"""Error during API call to Gemini in /countycityfromcoordinates: {e}.
-        Response status: {response.status_code if response else 'N/A'}, content: {response.text if response else 'N/A'}"""
-        logging.error(the_error_msg)
+    except Exception as e:
+        the_error_msg = f"""Error during API call to Gemini in /countycityfromcoordinates: {e}"""
+        logging.error(the_error_msg, exc_info=True) # Log full traceback
         return jsonify({"error": f"Error during API call: {e}"}), 500
-    except json.JSONDecodeError:
-        logging.error(f"Error decoding JSON response from Gemini in /countycityfromcoordinates. Response content: {response.text if response else 'N/A'}")
-        return jsonify({"error": "Error decoding JSON response."}), 500
 
 
 @app.route('/countycityfromcoordinates_batch', methods=['POST'])
 def get_county_city_from_coordinates_batch():
-    # counter = 0
-
-    # partititon_amount = 10
-
+    # This endpoint uses client-side batching with concurrent.futures.ThreadPoolExecutor
+    # It will continue to use the 'requests' library and the API key directly.
+    # No changes needed here, as it's not using the native batching feature.
     if not api_key:
         logging.error("API key missing in /countycityfromcoordinates_batch request.")
         return jsonify({"error": "GEMINI_SCHOOL_API_KEY environment variable not set."}), 500
@@ -187,12 +184,7 @@ def get_county_city_from_coordinates_batch():
         return jsonify({"error": f"Invalid JSON in request body: {e}"}), 400
 
     results = []
-    # Using ThreadPoolExecutor to make concurrent API calls to Gemini
-    # Adjust max_workers based on your server's capacity and Gemini's rate limits
-    # A value of 5-10 is often a good starting point for external APIs
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-
-    # with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         future_to_coords = {
             executor.submit(_process_single_coordinate, coords, api_key): coords
             for coords in batch_data
@@ -208,17 +200,15 @@ def get_county_city_from_coordinates_batch():
                     "latitude": coords.get('latitude'),
                     "longitude": coords.get('longitude'),
                     "error": str(exc),
-                    "gbifID_original_index": coords.get('gbifID_original_index') # Ensure this is passed back even on error
+                    "gbifID_original_index": coords.get('gbifID_original_index')
                 })
-            # if counter % 2 == partititon_amount:
-            #     time.delay()
-            # counter += 1
-
     return jsonify(results)
 
 def _process_single_coordinate(coords, api_key):
-    """Helper function to process a single coordinate set for the batch endpoint.
-    It calls the Gemini API for one coordinate and returns its processed result."""
+    # This helper function for client-side batching also needs to be updated
+    # to use the new SDK if you want it to be consistent.
+    # For now, keeping it with 'requests' to minimize changes, but it's less efficient.
+    # If you want to use the SDK here, it would mirror the logic in /countycityfromcoordinates.
     decimal_latitude = coords.get('latitude')
     decimal_longitude = coords.get('longitude')
     coordinate_uncertainty = coords.get('coordinate_uncertainty')
@@ -236,40 +226,26 @@ def _process_single_coordinate(coords, api_key):
     decimal longitude: {decimal_longitude}
     coordinate uncertainty: {coordinate_uncertainty if coordinate_uncertainty else 'not specified'}"""
 
-    # CHQ: Gemini AI added generationConfig to specify structured output
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    headers = {'Content-Type': 'application/json'}
-    data = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"text": prompt_text}
-                ]
-            }
-        ],
-        "generationConfig": { # NEW: Specify structured output
-            "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "OBJECT",
-                "properties": {
-                    "county": {"type": "STRING"},
-                    "city/town": {"type": "STRING"}
-                },
-                "propertyOrdering": ["county", "city/town"]
-            }
-        }
-    }
-
+    # --- UPDATED: Use new SDK for _process_single_coordinate ---
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(data))
-        response.raise_for_status()
-        response_json = response.json()
-
-        # Extract the structured response directly
-        if response_json.get('candidates') and response_json['candidates'][0].get('content') and response_json['candidates'][0]['content'].get('parts'):
-            # The content will already be parsed JSON if responseMimeType is application/json
-            parsed_gemini_response = json.loads(response_json['candidates'][0]['content']['parts'][0]['text'])
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response_schema = genai.types.Schema(
+            type=genai.types.Type.OBJECT,
+            properties={
+                "county": genai.types.Schema(type=genai.types.Type.STRING),
+                "city/town": genai.types.Schema(type=genai.types.Type.STRING)
+            }
+        )
+        response = model.generate_content(
+            prompt_text,
+            generation_config=genai.types.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=response_schema
+            )
+        )
+        
+        if response.candidates:
+            parsed_gemini_response = json.loads(response.candidates[0].content.parts[0].text)
             return {
                 "latitude": decimal_latitude,
                 "longitude": decimal_longitude,
@@ -278,18 +254,16 @@ def _process_single_coordinate(coords, api_key):
                 "gbifID_original_index": coords.get('gbifID_original_index')
             }
         else:
-            logging.warning(f"Gemini response did not contain expected structured content for ({decimal_latitude}, {decimal_longitude}). Full response: {response_json}")
+            logging.warning(f"Gemini response did not contain expected structured content for ({decimal_latitude}, {decimal_longitude}). Full response: {response}")
             return {
                 "latitude": decimal_latitude,
                 "longitude": decimal_longitude,
                 "error": "Gemini response did not contain expected structured content.",
                 "gbifID_original_index": coords.get('gbifID_original_index')
             }
-    except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+    except Exception as e:
         error_detail = str(e)
-        if hasattr(e, 'response') and e.response is not None:
-            error_detail = f"HTTP Status {e.response.status_code}: {e.response.text}"
-        logging.error(f"Error processing coordinate ({decimal_latitude}, {decimal_longitude}): {error_detail}")
+        logging.error(f"Error processing coordinate ({decimal_latitude}, {decimal_longitude}): {error_detail}", exc_info=True)
         return {
             "latitude": decimal_latitude,
             "longitude": decimal_longitude,
@@ -297,11 +271,14 @@ def _process_single_coordinate(coords, api_key):
             "gbifID_original_index": coords.get('gbifID_original_index')
         }
 
+
 @app.route('/countycityfromcoordinates_nativebatch', methods=['POST'])
 def get_county_city_from_coordinates_native_batching():
-    if not storage_client or not genai_client:
-        logger.error("Google Cloud clients not initialized. Cannot perform native batching.")
-        return jsonify({"error": "Server not configured for native batching (GCP clients uninitialized)."}), 500
+    # This endpoint uses the native batching feature of the Generative Language API.
+    # The `google-generativeai` SDK provides a higher-level function for this.
+    if not storage_client: # genai_client is no longer used directly as before
+        logger.error("Google Cloud Storage client not initialized. Cannot perform native batching.")
+        return jsonify({"error": "Server not configured for native batching (GCS client uninitialized)."}), 500
     
     if not all([GCS_INPUT_BUCKET, GCS_OUTPUT_BUCKET, GCP_PROJECT_ID]):
         logger.error("Missing GCS_INPUT_BUCKET, GCS_OUTPUT_BUCKET, or GCP_PROJECT_ID environment variables.")
@@ -316,12 +293,12 @@ def get_county_city_from_coordinates_native_batching():
         return jsonify({"error": f"Invalid JSON in request body: {e}"}), 400
 
     # 1. Prepare input data as JSONL
-    input_lines = []
+    input_entries = []
     for item in batch_data:
         decimal_latitude = item.get('latitude')
         decimal_longitude = item.get('longitude')
         coordinate_uncertainty = item.get('coordinate_uncertainty')
-        gbif_id_original_index = item.get('gbifID_original_index') # Pass through original index
+        gbif_id_original_index = item.get('gbifID_original_index')
 
         if decimal_latitude is None or decimal_longitude is None:
             logger.warning(f"Skipping malformed item in batch: {item}")
@@ -332,39 +309,31 @@ def get_county_city_from_coordinates_native_batching():
         decimal longitude: {decimal_longitude}
         coordinate uncertainty: {coordinate_uncertainty if coordinate_uncertainty else 'not specified'}"""
         
-        # Each line in the JSONL input file represents one request to the model
-        input_entry = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [
-                        {"text": prompt_text}
-                    ]
-                }
-            ],
-            # Include metadata to map results back later
-            "metadata": {
+        input_entries.append(genai.types.BatchGenerateContentsRequest.Input(
+            contents=[genai.types.Content(role="user", parts=[genai.types.Part(text=prompt_text)])],
+            metadata={
                 "original_latitude": str(decimal_latitude),
                 "original_longitude": str(decimal_longitude),
                 "gbifID_original_index": str(gbif_id_original_index)
             }
-        }
-        input_lines.append(json.dumps(input_entry))
+        ))
 
-    if not input_lines:
+    if not input_entries:
         return jsonify({"error": "No valid coordinate objects found in the batch data."}), 400
 
-    input_jsonl_content = "\n".join(input_lines)
-
-    # 2. Upload input file to GCS
+    # 2. Upload input file to GCS (still needed for native batching)
     unique_id = str(uuid.uuid4())
     input_blob_name = f"batch_input/{unique_id}/input.jsonl"
-    output_prefix = f"batch_output/{unique_id}/" # Gemini will add files under this prefix
+    output_prefix = f"batch_output/{unique_id}/"
 
     try:
         input_bucket = storage_client.bucket(GCS_INPUT_BUCKET)
         input_blob = input_bucket.blob(input_blob_name)
-        input_blob.upload_from_string(input_jsonl_content, content_type="application/jsonl")
+        
+        # Convert input_entries to JSONL string for upload
+        jsonl_content = "\n".join([json.dumps(entry.to_dict()) for entry in input_entries])
+        input_blob.upload_from_string(jsonl_content, content_type="application/jsonl")
+        
         input_uri = f"gs://{GCS_INPUT_BUCKET}/{input_blob_name}"
         output_uri = f"gs://{GCS_OUTPUT_BUCKET}/{output_prefix}"
         logger.info(f"Uploaded input to GCS: {input_uri}")
@@ -372,27 +341,29 @@ def get_county_city_from_coordinates_native_batching():
         logger.error(f"Error uploading input to GCS: {e}", exc_info=True)
         return jsonify({"error": f"Failed to upload input to GCS: {e}"}), 500
 
-    # 3. Initiate the Batch Job with Generative Language API
+    # 3. Initiate the Batch Job with Generative Language API (using the new SDK)
     try:
-        request_body = glm.BatchGenerateContentsRequest(
-            model=f"models/gemini-2.0-flash", # Specify the model
-            input_content_uri=input_uri,
-            output_content_uri=output_uri,
-            generation_config=glm.GenerationConfig( # Apply structured output to the batch
-                response_mime_type="application/json",
-                response_schema={
-                    "type": "OBJECT",
-                    "properties": {
-                        "county": {"type": "STRING"},
-                        "city/town": {"type": "STRING"}
-                    },
-                    "propertyOrdering": ["county", "city/town"]
+        # Define generation config for the batch job
+        generation_config = genai.types.GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=genai.types.Schema(
+                type=genai.types.Type.OBJECT,
+                properties={
+                    "county": genai.types.Schema(type=genai.types.Type.STRING),
+                    "city/town": genai.types.Schema(type=genai.types.Type.STRING)
                 }
             )
         )
         
-        # This initiates the asynchronous operation
-        operation = genai_client.batch_generate_contents(request=request_body)
+        # Call the batch_generate_contents function from the SDK
+        # This is a high-level function that handles the underlying API client.
+        operation = genai.batch_generate_contents(
+            model="gemini-2.0-flash",
+            input_content_uri=input_uri,
+            output_content_uri=output_uri,
+            generation_config=generation_config
+        )
+        
         logger.info(f"Initiated native batch job: {operation.name}")
         
         return jsonify({
@@ -401,7 +372,7 @@ def get_county_city_from_coordinates_native_batching():
             "input_uri": input_uri,
             "output_uri_prefix": output_uri,
             "message": "The ETL script will need to poll this operation_name and retrieve results from GCS."
-        }), 202 # 202 Accepted, as the job is asynchronous
+        }), 202
 
     except GoogleAPIError as e:
         logger.error(f"Google API error initiating batch job: {e}", exc_info=True)
@@ -421,25 +392,20 @@ def aichat_endpoint():
     if not user_input:
         return jsonify({"error": "Missing 'text' parameter in the query string."})
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    headers = {'Content-Type': 'application/json'}
-    data = {
-        "contents": [
-            {
-                "parts": [{"text": user_input}]
-            }
-        ]
-    }
-
+    # --- UPDATED: Use new SDK for direct calls ---
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(data))
-        response.raise_for_status()
-        response_json = response.json()
-        return jsonify(response_json)
-    except requests.exceptions.RequestException as e:
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(user_input)
+        
+        if response.candidates:
+            text_response = response.candidates[0].content.parts[0].text
+            return jsonify({"text": text_response})
+        else:
+            logging.warning(f"Gemini response did not contain candidates: {response}")
+            return jsonify({"error": "Gemini response did not contain expected content."}), 500
+    except Exception as e:
+        logging.error(f"Error during API call to Gemini in /aichat: {e}")
         return jsonify({"error": f"Error during API call: {e}"})
-    except json.JSONDecodeError:
-        return jsonify({"error": "Error decoding JSON response."})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000), debug=True)

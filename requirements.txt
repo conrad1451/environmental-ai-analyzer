@@ -2,23 +2,27 @@ Flask
 flask-cors
 requests
 pyyaml
-google-cloud-storage==2.11.0 # Pin to a known working version for 3.11
-google-cloud-bigquery==3.10.0 # Pin to a known working version for 3.11
-gcsfs==2023.1.0 # Pin to a known working version for 3.11
 
-# Core Google Generative AI and its dependencies
-# These are the ones causing the most trouble.
-# We'll try versions that were stable and widely used with Python 3.11.
-google-generativelanguage==0.6.0 # A slightly older, but often more stable version
-google-api-core==2.11.0
-google-auth==2.22.0
-googleapis-common-protos==1.60.0
-protobuf==3.20.3 # CRITICAL: This version is often compatible with older grpcio/google-cloud libs on 3.11
-grpcio==1.58.0 # CRITICAL: This version is often compatible with older protobuf/google-cloud libs on 3.11
-grpcio-status==1.58.0
+# Google Cloud Libraries (updated to more recent versions, should be fine with Py3.11)
+google-cloud-storage
+google-cloud-bigquery
+gcsfs
 
-# Other packages you had:
+# NEW: Unified Google Gen AI SDK
+google-generativeai # This is the package name on PyPI: google-genai
+# It brings in its own compatible versions of google-api-core, google-auth, protobuf, grpcio etc.
+# So, we can remove explicit pins for those if they are direct dependencies of google-generativeai.
+
+# Other project dependencies
 pandas
 python-dateutil
 tenacity
 pyarrow
+
+# If you are using langchain, include these. Otherwise, remove them.
+# langchain
+# langchain-community
+# langchain-core
+# langchain-google-genai
+# langchain-text-splitters
+# langsmith

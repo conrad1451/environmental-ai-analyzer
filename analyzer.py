@@ -184,6 +184,8 @@ def get_county_city_from_coordinates_batch():
         return jsonify({"error": f"Invalid JSON in request body: {e}"}), 400
 
     results = []
+    loop_count = 0
+    MAX_LOOPS = 4
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         future_to_coords = {
             executor.submit(_process_single_coordinate, coords, api_key): coords
@@ -191,17 +193,21 @@ def get_county_city_from_coordinates_batch():
         }
         for future in concurrent.futures.as_completed(future_to_coords):
             coords = future_to_coords[future]
-            try:
-                result = future.result()
-                results.append(result)
-            except Exception as exc:
-                logging.error(f"Coordinate {coords} generated an exception: {exc}")
-                results.append({
-                    "latitude": coords.get('latitude'),
-                    "longitude": coords.get('longitude'),
-                    "error": str(exc),
-                    "gbifID_original_index": coords.get('gbifID_original_index')
-                })
+
+            if loop_count < MAX_LOOPS:
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as exc:
+                    logging.error(f"Coordinate {coords} generated an exception: {exc}")
+                    results.append({
+                        "latitude": coords.get('latitude'),
+                        "longitude": coords.get('longitude'),
+                        "error": str(exc),
+                        "gbifID_original_index": coords.get('gbifID_original_index')
+                    })
+                loop_count = loop_count + 1
+
     return jsonify(results)
 
 def _process_single_coordinate(coords, api_key):

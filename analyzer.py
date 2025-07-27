@@ -138,14 +138,24 @@ def get_county_city_from_coordinates_batch():
         return jsonify({"error": "GEMINI_SCHOOL_API_KEY environment variable not set."}), 500
 
     try:
-        batch_data = request.get_json()
-        if not isinstance(batch_data, list):
+        raw_batch_data = request.get_json()
+        if not isinstance(raw_batch_data, list):
             return jsonify({"error": "Request body must be a JSON array of coordinate objects."}), 400
     except Exception as e:
         logging.error(f"Error parsing batch request JSON: {e}")
         return jsonify({"error": f"Invalid JSON in request body: {e}"}), 400
 
     results = []
+    # loop_count = 0
+    # MAX_LOOPS = 4
+
+    MAX_SIZE= 40
+
+    if len(raw_batch_data) > MAX_SIZE:
+        batch_data = raw_batch_data[0:MAX_SIZE]
+    else:
+        batch_data = raw_batch_data
+        
     # Using ThreadPoolExecutor to make concurrent API calls to Gemini
     # Adjust max_workers based on your server's capacity and Gemini's rate limits
     # A value of 5-10 is often a good starting point for external APIs
@@ -156,6 +166,8 @@ def get_county_city_from_coordinates_batch():
         }
         for future in concurrent.futures.as_completed(future_to_coords):
             coords = future_to_coords[future]
+
+            # if loop_count < MAX_LOOPS:
             try:
                 result = future.result()
                 results.append(result)
@@ -168,6 +180,7 @@ def get_county_city_from_coordinates_batch():
                     "gbifID_original_index": coords.get('gbifID_original_index') # Ensure this is passed back even on error
                 })
 
+            # loop_count = loop_count + 1
     return jsonify(results)
 
 def _process_single_coordinate(coords, api_key):

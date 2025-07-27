@@ -1,34 +1,8 @@
 Flask
 flask-cors
 requests
-pyyaml
-
-# Google Cloud Libraries - Use latest stable versions and let them manage sub-dependencies
-google-cloud-storage
-google-cloud-bigquery
-gcsfs
-
-# Core Google Generative AI SDK - Use latest stable version
-google-generativeai
-
-# Other project dependencies
-pandas
-python-dateutil
-tenacity
-pyarrow
-
-# IMPORTANT: Remove the following lines from your requirements.txt
-# google-api-core==2.11.0
-# google-auth==2.22.0
-# googleapis-common-protos==1.60.0
-# protobuf==3.20.3
-# grpcio==1.58.0
-# grpcio-status==1.58.0
-
-# If you are using langchain, include these. Otherwise, remove them.
-# langchain
-# langchain-community
-# langchain-core
-# langchain-google-genai
-# langchain-text-splitters
-# langsmith
+langchain-google-genai
+langchain
+Flask
+Gunicorn
+flask_cors

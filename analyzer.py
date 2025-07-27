@@ -153,6 +153,7 @@ def get_county_city_from_coordinates_batch():
 
     if len(raw_batch_data) > MAX_SIZE:
         batch_data = raw_batch_data[0:MAX_SIZE]
+        logging.warning(f"will only take first {MAX_SIZE} entries ")
     else:
         batch_data = raw_batch_data
         

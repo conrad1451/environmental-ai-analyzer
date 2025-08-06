@@ -149,7 +149,9 @@ def get_county_city_from_coordinates_batch():
     # loop_count = 0
     # MAX_LOOPS = 4
 
-    MAX_SIZE= 40
+    # 40 is too large a max size, will do 15
+    # MAX_SIZE= 40
+    MAX_SIZE= 15
 
     if len(raw_batch_data) > MAX_SIZE:
         batch_data = raw_batch_data[0:MAX_SIZE]

@@ -15,10 +15,10 @@ CORS(app)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # It's better to store your API key as an environment variable
-api_key = os.environ.get("GEMINI_SCHOOL_API_KEY")
+api_key = os.environ.get("GEMINI_PERSONAL_API_KEY")
 
 if not api_key:
-    logging.error("Error: GEMINI_SCHOOL_API_KEY environment variable not set at app startup.")
+    logging.error("Error: GEMINI_PERSONAL_API_KEY environment variable not set at app startup.")
 
 @app.route('/')
 def hello_world():
@@ -28,7 +28,7 @@ def hello_world():
 def explain_ai():
     if not api_key:
         logging.error("API key missing in /explain_ai request.")
-        return jsonify({"error": "GEMINI_SCHOOL_API_KEY environment variable not set."}), 500
+        return jsonify({"error": "GEMINI_PERSONAL_API_KEY environment variable not set."}), 500
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
